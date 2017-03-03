@@ -213,7 +213,58 @@ BOOL CheckRootFolder(long leafFolderID)
 	}
 	return false;
 }
+/*-----------------------------------------------------------------------------+
+| CheckTargetFolder - this will look to see if the base target is available.   |
+| if not prompt to have the user create the ouput source. Since this will be   |
+| invoked from an application it is pointless to create the missing folder.    |
++-----------------------------------------------------------------------------*/
+BOOL CheckTargetFolder(long leafFolderID)
+{
+	long status;
+	long parentID;
+	status = aaApi_SelectParentProject(leafFolderID);
+	parentID = aaApi_GetProjectNumericProperty(PROJ_PROP_ID,0);
+	LPCWSTR parentName = aaApi_GetProjectStringProperty(PROJ_PROP_NAME,0);
+	if(wcscmp(L"Piping Isometrics",parentName) == 0)
+	{
+		status = aaApi_SelectParentProject(parentID);
+		parentID = aaApi_GetProjectNumericProperty(PROJ_PROP_ID,0);
+		parentName = aaApi_GetProjectStringProperty(PROJ_PROP_NAME,0);
+		if(wcscmp(L"Drawings",parentName)==0)
+		{
+			status = aaApi_SelectParentProject(parentID);
+		    parentID = aaApi_GetProjectNumericProperty(PROJ_PROP_ID,0);
+		    parentName = aaApi_GetProjectStringProperty(PROJ_PROP_NAME,0);
+			if (parentID >0)
+			{ 
+				HAADMSBUFFER buffer;
+				buffer = aaApi_SelectProjectDataBufferChilds2(parentID,false);
+				int childCount = aaApi_DmsDataBufferGetCount(buffer);
+				for (int i = 0;i<childCount; i++)
+				{
+					LPCWSTR childName = aaApi_DmsDataBufferGetStringProperty(buffer,PROJ_PROP_NAME,i);
+					if (wcscmp(childName,L"Sheets") == 0)
+					{
+						long pid = aaApi_DmsDataBufferGetNumericProperty(buffer,PROJ_PROP_ID,i);
+						HAADMSBUFFER b2 = aaApi_SelectProjectDataBufferChilds2(pid,false);
+						int subChildCount = aaApi_DmsDataBufferGetCount(b2);
+            
+						for (int j = 0;j<subChildCount;j++)
+						{
+							 LPCWSTR childName = aaApi_DmsDataBufferGetStringProperty(b2,PROJ_PROP_NAME,j);
 
+							 if (wcscmp(childName,L"Piping Isometrics")==0)
+							 {
+								 return true;
+							 }
+						}
+					}
+				}//end for childs...
+			}//end parentid
+		}//end drawings
+	}//end piping iso
+	return false;
+}
 
 // Typically there is one hook function for each hook
 // but you can use one hook function and use a switch(hookId) statement to determine which hook is called.
@@ -258,6 +309,10 @@ LONG AAAPIHOOK  Hook_Watcher
 					}
 				break;
 			}
+			//in case we want to look at the checkin event to update something.
+			//I am thinking this will not work for this case.  we only need to 
+			//create the ISO one time after that we don't want to recreate the 
+			//iso.
 		case AAHOOK_CHECKIN_DOCUMENT:
 			{
 				AADOCUMENTS_PARAM* param = (AADOCUMENTS_PARAM*)aParam1;
@@ -293,9 +348,10 @@ LONG AAAPIHOOK  Hook_Watcher
 						CURLEncode encoder;
 
 						aaApi_GetConnectionInfo(dsHandle,&bODBC,&nativeType,&loginType,dsName,AADMS_BUFSIZE_DSNAME,loginName,AADMS_BUFSIZE_USERNAME,pwd,AADMS_BUFSIZE_PASSWORD,NULL,0);
-						
-
-
+						//if the base target is not there then prompt to create?
+						if(!CheckTargetFolder)
+						{
+						}
 						sprintf_s(data,"docset=\"%ld:%ld \"&pwdatasource=%S&pwusername=%S&pwpwd=%S&appKeyin=\"%s\"&appName=%s&pwLoginCMD=\"%s\" ", 
 							docParams->lProjectId, docParams->lDocumentId,dsName,loginName,pwd,keyinString,appName,pwLoginCMD);
 						
@@ -338,14 +394,34 @@ LONG AAAPIHOOK  Hook_Watcher
 						headers += szSize;
 						headers += L"\r\nContent-Type: application/x-www-form-urlencoded\r\n";
 						client.SetAdditionalRequestHeaders(headers);
+						wstring fileName = docParams->lpctstrName;
+						wstring msg = L"Sent Sheet Create Request - ";
+						msg.append(fileName);
 
 						// Send http post request.
 						client.SendHttpRequest(L"POST");
 
+						if (client.SendHttpRequest(L"POST"))
+							aaApi_ShowInfoMessage(msg.c_str());
+						else
+						{
+							wstring respCode = client.GetResponseStatusCode();
+							respCode.append(L" - Error ");
+							msg = L"Could not send request for - ";
+							msg.append(fileName);
+							aaApi_ShowMessage(respCode.c_str(),msg.c_str(),true,false);
+							aaApi_ShowErrorMessageDlg(NULL);
+						}
 						wstring httpResponseHeader = client.GetResponseHeader();
 						wstring httpResponseContent = client.GetResponseContent();
 
-
+					}
+					else // not in the target just print out the create happend
+					{
+						wstring filename = docParams->lpctstrName;
+						wstring msg = L"Created File - ";
+						msg.append(filename);
+						aaApi_ShowInfoMessage(msg.c_str());
 					}
 				}
 				break;
